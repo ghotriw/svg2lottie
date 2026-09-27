@@ -77,4 +77,4 @@ This crate serializes with `serde_json`'s `preserve_order` feature and construct
 
 ## License
 
-MIT or Apache-2.0, at your option.
+[MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE), at your option.
