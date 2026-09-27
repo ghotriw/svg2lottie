@@ -173,4 +173,33 @@ mod tests {
         assert_eq!(tgs_bytes[0], 0x1f);
         assert_eq!(tgs_bytes[1], 0x8b);
     }
+
+    #[test]
+    fn test_padding_scaling() {
+        let svg = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+            <rect x="0" y="0" width="100" height="100" fill="#ff0000"/>
+        </svg>"##;
+
+        // 1. Without padding (default, full bleed):
+        let opt_no_pad = SvgToLottieOptions::telegram_custom_emoji();
+        let val_no_pad = convert_svg_to_value(svg, &opt_no_pad).unwrap();
+        let shapes = val_no_pad["layers"][0]["shapes"].as_array().unwrap();
+        let sh = shapes.iter().find(|s| s["ty"] == "sh").unwrap();
+        let vertices = sh["ks"]["k"]["v"].as_array().unwrap();
+        let min_x = vertices.iter().map(|p| p[0].as_f64().unwrap()).fold(f64::INFINITY, f64::min);
+        let max_x = vertices.iter().map(|p| p[0].as_f64().unwrap()).fold(f64::NEG_INFINITY, f64::max);
+        assert!((min_x - 0.0).abs() < 1e-2, "Expected min_x 0.0, got {}", min_x);
+        assert!((max_x - 512.0).abs() < 1e-2, "Expected max_x 512.0, got {}", max_x);
+
+        // 2. With 16px padding (480x480 inside 512x512):
+        let opt_pad = SvgToLottieOptions::telegram_sticker().with_padding(16);
+        let val_pad = convert_svg_to_value(svg, &opt_pad).unwrap();
+        let shapes_pad = val_pad["layers"][0]["shapes"].as_array().unwrap();
+        let sh_pad = shapes_pad.iter().find(|s| s["ty"] == "sh").unwrap();
+        let vertices_pad = sh_pad["ks"]["k"]["v"].as_array().unwrap();
+        let min_x_pad = vertices_pad.iter().map(|p| p[0].as_f64().unwrap()).fold(f64::INFINITY, f64::min);
+        let max_x_pad = vertices_pad.iter().map(|p| p[0].as_f64().unwrap()).fold(f64::NEG_INFINITY, f64::max);
+        assert!((min_x_pad - 16.0).abs() < 1e-2, "Expected min_x 16.0, got {}", min_x_pad);
+        assert!((max_x_pad - 496.0).abs() < 1e-2, "Expected max_x 496.0 (16+480), got {}", max_x_pad);
+    }
 }

@@ -42,6 +42,10 @@ struct Args {
     #[arg(long, default_value_t = 60)]
     duration_frames: u32,
 
+    /// Inset padding in pixels on each side (defaults to 0 for full bleed, 16 for standard stickers)
+    #[arg(long, default_value_t = 0)]
+    padding: u32,
+
     /// Pretty-print output JSON (only applies to uncompressed JSON output)
     #[arg(short, long)]
     pretty: bool,
@@ -71,6 +75,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         fps: args.fps,
         duration_frames: args.duration_frames,
         tgs_compatible: is_tgs,
+        padding: args.padding,
         name: args
             .input
             .file_stem()

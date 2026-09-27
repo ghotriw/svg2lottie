@@ -109,16 +109,11 @@ pub fn convert_svg_to_value(
     let canvas_w = options.width.unwrap_or(src_w.round() as u32);
     let canvas_h = options.height.unwrap_or(src_h.round() as u32);
 
-    let (scale, offset_x, offset_y) = if options.tgs_compatible {
-        let target_area = 480.0f32;
-        let s = (target_area / src_w).min(target_area / src_h);
-        let fitted_w = src_w * s;
-        let fitted_h = src_h * s;
-        let ox = (canvas_w as f32 - fitted_w) / 2.0;
-        let oy = (canvas_h as f32 - fitted_h) / 2.0;
-        (s, ox, oy)
-    } else {
-        let s = (canvas_w as f32 / src_w).min(canvas_h as f32 / src_h);
+    let (scale, offset_x, offset_y) = {
+        let pad = options.padding as f32;
+        let target_w = (canvas_w as f32 - pad * 2.0).max(1.0);
+        let target_h = (canvas_h as f32 - pad * 2.0).max(1.0);
+        let s = (target_w / src_w).min(target_h / src_h);
         let fitted_w = src_w * s;
         let fitted_h = src_h * s;
         let ox = (canvas_w as f32 - fitted_w) / 2.0;

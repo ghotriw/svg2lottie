@@ -10,9 +10,10 @@ pub struct SvgToLottieOptions {
     pub duration_frames: u32,
     /// When true, enables Telegram TGS mode:
     /// - Adds `"tgs": 1` to Lottie JSON root.
-    /// - Scales and centers graphics within a 480x480 area inside 512x512 canvas.
     /// - Ensures exact JSON key order for rlottie parser compatibility.
     pub tgs_compatible: bool,
+    /// Inset padding in pixels on each side (defaults to 0 for full bleed, 16 for standard 480x480 stickers).
+    pub padding: u32,
     /// Name of the animation composition.
     pub name: Option<String>,
 }
@@ -25,14 +26,29 @@ impl Default for SvgToLottieOptions {
             fps: 60,
             duration_frames: 60,
             tgs_compatible: false,
+            padding: 0,
             name: None,
         }
     }
 }
 
 impl SvgToLottieOptions {
-    /// Presets optimized for Telegram Animated Stickers and Custom Emojis (.tgs):
-    /// 512x512 canvas, 60 fps, 1 second (60 frames), centered vector paths with tgs flag.
+    /// Presets optimized for Telegram Custom Emojis (.tgs):
+    /// 512x512 canvas, 60 fps, 1 second (60 frames), padding 0 (full bleed), tgs flag.
+    pub fn telegram_custom_emoji() -> Self {
+        Self {
+            width: Some(512),
+            height: Some(512),
+            fps: 60,
+            duration_frames: 60,
+            tgs_compatible: true,
+            padding: 0,
+            name: Some("Custom Emoji".to_string()),
+        }
+    }
+
+    /// Presets optimized for Telegram Animated Stickers (.tgs):
+    /// 512x512 canvas, 60 fps, 1 second (60 frames), padding 0 (use .with_padding(16) for 480x480 sticker box), tgs flag.
     pub fn telegram_sticker() -> Self {
         Self {
             width: Some(512),
@@ -40,7 +56,8 @@ impl SvgToLottieOptions {
             fps: 60,
             duration_frames: 60,
             tgs_compatible: true,
-            name: Some("Vector Emoji".to_string()),
+            padding: 0,
+            name: Some("Vector Sticker".to_string()),
         }
     }
 
@@ -52,6 +69,7 @@ impl SvgToLottieOptions {
             fps,
             duration_frames: fps,
             tgs_compatible: false,
+            padding: 0,
             name: Some("Vector Animation".to_string()),
         }
     }
@@ -79,6 +97,11 @@ impl SvgToLottieOptions {
 
     pub fn with_tgs_compatible(mut self, tgs_compatible: bool) -> Self {
         self.tgs_compatible = tgs_compatible;
+        self
+    }
+
+    pub fn with_padding(mut self, padding: u32) -> Self {
+        self.padding = padding;
         self
     }
 }
