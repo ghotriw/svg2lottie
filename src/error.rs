@@ -5,6 +5,7 @@ pub enum SvgToLottieError {
     SvgParseError(String),
     InvalidDimensions { width: f32, height: f32 },
     NoDrawableShapes,
+    TooManyLayers { count: usize, max: usize },
     SerializationError(String),
     CompressionError(String),
     IoError(std::io::Error),
@@ -19,6 +20,13 @@ impl fmt::Display for SvgToLottieError {
             }
             Self::NoDrawableShapes => {
                 write!(f, "SVG does not contain any drawable vector shapes")
+            }
+            Self::TooManyLayers { count, max } => {
+                write!(
+                    f,
+                    "Composition exceeds Telegram layer limit ({} > {} layers)",
+                    count, max
+                )
             }
             Self::SerializationError(msg) => {
                 write!(f, "Failed to serialize Lottie JSON: {}", msg)

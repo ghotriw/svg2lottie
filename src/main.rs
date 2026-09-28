@@ -1,5 +1,5 @@
 use std::fs;
-use std::io::{self, Read, Write};
+use std::io::{self, IsTerminal, Read, Write};
 use std::path::PathBuf;
 
 use clap::Parser;
@@ -80,6 +80,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .input
             .file_stem()
             .and_then(|s| s.to_str())
+            .filter(|&s| s != "-")
             .map(|s| s.to_string()),
     };
 
@@ -91,6 +92,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 eprintln!("Successfully created TGS: {}", path.display());
             }
             _ => {
+                if io::stdout().is_terminal() {
+                    eprintln!("Error: Refusing to write binary TGS data directly to terminal. Specify an output file with '-o <output.tgs>' or redirect stdout.");
+                    std::process::exit(1);
+                }
                 io::stdout().write_all(&tgs_bytes)?;
             }
         }

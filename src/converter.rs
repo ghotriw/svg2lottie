@@ -1,4 +1,3 @@
-use std::io::Write;
 use std::sync::{Arc, OnceLock};
 
 use crate::error::SvgToLottieError;
@@ -9,15 +8,42 @@ use crate::gradient::{
 use crate::options::SvgToLottieOptions;
 
 static FONT_DB: OnceLock<Arc<usvg::fontdb::Database>> = OnceLock::new();
+static EMPTY_FONT_DB: OnceLock<Arc<usvg::fontdb::Database>> = OnceLock::new();
 
-fn get_font_database() -> Arc<usvg::fontdb::Database> {
-    FONT_DB
-        .get_or_init(|| {
-            let mut db = usvg::fontdb::Database::new();
-            db.load_system_fonts();
-            Arc::new(db)
-        })
-        .clone()
+fn has_svg_text(svg_data: &str) -> bool {
+    fn matches_tag(s: &str, tag: &str) -> bool {
+        let mut rest = s;
+        while let Some(idx) = rest.find(tag) {
+            let after = &rest[idx + tag.len()..];
+            if let Some(c) = after.chars().next()
+                && (c.is_ascii_whitespace() || c == '>' || c == '/')
+            {
+                return true;
+            }
+            rest = after;
+        }
+        false
+    }
+
+    matches_tag(svg_data, "<text") || matches_tag(svg_data, "<tspan")
+}
+
+fn get_font_database(svg_data: &str) -> Arc<usvg::fontdb::Database> {
+    // Only load full system fonts from disk if the SVG contains text elements.
+    // Handles formatted SVGs (multiline attributes, newlines, tabs) while avoiding false positives on <textarea>, etc.
+    if has_svg_text(svg_data) {
+        FONT_DB
+            .get_or_init(|| {
+                let mut db = usvg::fontdb::Database::new();
+                db.load_system_fonts();
+                Arc::new(db)
+            })
+            .clone()
+    } else {
+        EMPTY_FONT_DB
+            .get_or_init(|| Arc::new(usvg::fontdb::Database::new()))
+            .clone()
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -28,14 +54,19 @@ struct LottieBezierPath {
     o: Vec<[f32; 2]>,
 }
 
-fn collect_paths_recursive(group: &usvg::Group, out: &mut Vec<usvg::Path>) {
+fn collect_paths_recursive<'a>(
+    group: &'a usvg::Group,
+    parent_opacity: f32,
+    out: &mut Vec<(&'a usvg::Path, f32)>,
+) {
+    let current_opacity = parent_opacity * group.opacity().get();
     for child in group.children() {
         match child {
             usvg::Node::Group(g) => {
-                collect_paths_recursive(g, out);
+                collect_paths_recursive(g, current_opacity, out);
             }
             usvg::Node::Path(p) if p.is_visible() => {
-                out.push(*p.clone());
+                out.push((p, current_opacity));
             }
             _ => {}
         }
@@ -48,12 +79,11 @@ fn flush_subpath(
     in_tangents: &mut Vec<[f32; 2]>,
     out_tangents: &mut Vec<[f32; 2]>,
     closed: &mut bool,
-    is_filled: bool,
 ) {
     if vertices.len() >= 2 {
-        let is_closed = *closed || (is_filled && vertices.len() >= 3);
+        let mut is_closed = *closed;
         let v_len = vertices.len();
-        if is_closed && v_len >= 3 {
+        if v_len >= 3 {
             let dx = vertices[v_len - 1][0] - vertices[0][0];
             let dy = vertices[v_len - 1][1] - vertices[0][1];
             if dx * dx + dy * dy < 0.0001 {
@@ -61,6 +91,7 @@ fn flush_subpath(
                 vertices.pop();
                 in_tangents.pop();
                 out_tangents.pop();
+                is_closed = true;
             }
         }
         subpaths.push(LottieBezierPath {
@@ -77,11 +108,61 @@ fn flush_subpath(
     *closed = false;
 }
 
+fn build_stroke_dashes(stroke: &usvg::Stroke, scale: f32) -> Option<serde_json::Value> {
+    let dasharray = stroke.dasharray()?;
+    if dasharray.is_empty() {
+        return None;
+    }
+
+    // SVG spec: if an odd number of values is provided, repeat the list to yield an even number
+    let full_array: Vec<f32> = if dasharray.len() % 2 != 0 {
+        dasharray.iter().chain(dasharray.iter()).copied().collect()
+    } else {
+        dasharray.to_vec()
+    };
+
+    let mut dashes = Vec::new();
+    for (pair_idx, chunk) in (1..).zip(full_array.chunks(2)) {
+        let dash_len = (chunk[0] * scale).max(0.1);
+        let name_suffix = if pair_idx == 1 {
+            String::new()
+        } else {
+            format!(" {}", pair_idx)
+        };
+
+        dashes.push(serde_json::json!({
+            "n": "d",
+            "nm": format!("dash{}", name_suffix),
+            "v": { "a": 0, "k": dash_len }
+        }));
+
+        if chunk.len() > 1 {
+            let gap_len = (chunk[1] * scale).max(0.1);
+            dashes.push(serde_json::json!({
+                "n": "g",
+                "nm": format!("gap{}", name_suffix),
+                "v": { "a": 0, "k": gap_len }
+            }));
+        }
+    }
+
+    let offset = stroke.dashoffset() * scale;
+    if offset.abs() > 0.001 {
+        dashes.push(serde_json::json!({
+            "n": "o",
+            "nm": "offset",
+            "v": { "a": 0, "k": offset }
+        }));
+    }
+
+    Some(serde_json::Value::Array(dashes))
+}
+
 pub fn convert_svg_to_value(
     svg_data: &str,
     options: &SvgToLottieOptions,
 ) -> Result<serde_json::Value, SvgToLottieError> {
-    let fontdb = get_font_database();
+    let fontdb = get_font_database(svg_data);
     let opt = usvg::Options {
         fontdb,
         ..Default::default()
@@ -100,7 +181,7 @@ pub fn convert_svg_to_value(
     }
 
     let mut paths = Vec::new();
-    collect_paths_recursive(tree.root(), &mut paths);
+    collect_paths_recursive(tree.root(), 1.0, &mut paths);
 
     if paths.is_empty() {
         return Err(SvgToLottieError::NoDrawableShapes);
@@ -126,14 +207,13 @@ pub fn convert_svg_to_value(
     let mut layers: Vec<serde_json::Value> = Vec::new();
     let mut layer_idx = 1;
 
-    for p in &paths {
+    for &(p, group_opacity) in &paths {
         let combined = view_transform.pre_concat(p.abs_transform());
         let transformed_path = match p.data().clone().transform(combined) {
             Some(tp) => tp,
             None => continue,
         };
 
-        let is_filled = p.fill().is_some();
         let mut subpaths: Vec<LottieBezierPath> = Vec::new();
         let mut vertices: Vec<[f32; 2]> = Vec::new();
         let mut in_tangents: Vec<[f32; 2]> = Vec::new();
@@ -151,7 +231,6 @@ pub fn convert_svg_to_value(
                         &mut in_tangents,
                         &mut out_tangents,
                         &mut closed,
-                        is_filled,
                     );
                     cur_x = pt.x;
                     cur_y = pt.y;
@@ -208,7 +287,6 @@ pub fn convert_svg_to_value(
             &mut in_tangents,
             &mut out_tangents,
             &mut closed,
-            is_filled,
         );
 
         if subpaths.is_empty() {
@@ -220,7 +298,7 @@ pub fn convert_svg_to_value(
                 usvg::FillRule::NonZero => 1,
                 usvg::FillRule::EvenOdd => 2,
             };
-            let opacity = fill.opacity().get() * 100.0;
+            let opacity = fill.opacity().get() * group_opacity * 100.0;
 
             match fill.paint() {
                 usvg::Paint::Color(c) => Some(serde_json::json!({
@@ -243,7 +321,7 @@ pub fn convert_svg_to_value(
         };
 
         let stroke_shape = if let Some(stroke) = p.stroke() {
-            let opacity = stroke.opacity().get() * 100.0;
+            let opacity = stroke.opacity().get() * group_opacity * 100.0;
             let sx = (combined.sx * combined.sx + combined.ky * combined.ky).sqrt();
             let sy = (combined.kx * combined.kx + combined.sy * combined.sy).sqrt();
             let effective_scale = (sx + sy) / 2.0;
@@ -259,18 +337,25 @@ pub fn convert_svg_to_value(
                 usvg::LineJoin::Bevel => 3,
             };
             let miter_limit = stroke.miterlimit().get();
+            let dashes = build_stroke_dashes(stroke, effective_scale);
 
             match stroke.paint() {
-                usvg::Paint::Color(c) => Some(serde_json::json!({
-                    "ty": "st",
-                    "nm": "Stroke",
-                    "c": { "a": 0, "k": [c.red as f32 / 255.0, c.green as f32 / 255.0, c.blue as f32 / 255.0, 1.0] },
-                    "o": { "a": 0, "k": opacity },
-                    "w": { "a": 0, "k": stroke_width },
-                    "lc": line_cap,
-                    "lj": line_join,
-                    "ml": miter_limit
-                })),
+                usvg::Paint::Color(c) => {
+                    let mut obj = serde_json::json!({
+                        "ty": "st",
+                        "nm": "Stroke",
+                        "c": { "a": 0, "k": [c.red as f32 / 255.0, c.green as f32 / 255.0, c.blue as f32 / 255.0, 1.0] },
+                        "o": { "a": 0, "k": opacity },
+                        "w": { "a": 0, "k": stroke_width },
+                        "lc": line_cap,
+                        "lj": line_join,
+                        "ml": miter_limit
+                    });
+                    if let (Some(d), Some(map)) = (dashes, obj.as_object_mut()) {
+                        map.insert("d".to_string(), d);
+                    }
+                    Some(obj)
+                }
                 usvg::Paint::LinearGradient(lg) => Some(create_linear_gradient_stroke(
                     lg,
                     combined,
@@ -279,6 +364,7 @@ pub fn convert_svg_to_value(
                     line_join,
                     miter_limit,
                     opacity,
+                    dashes,
                 )),
                 usvg::Paint::RadialGradient(rg) => Some(create_radial_gradient_stroke(
                     rg,
@@ -288,6 +374,7 @@ pub fn convert_svg_to_value(
                     line_join,
                     miter_limit,
                     opacity,
+                    dashes,
                 )),
                 usvg::Paint::Pattern(_) => None,
             }
@@ -352,6 +439,13 @@ pub fn convert_svg_to_value(
         return Err(SvgToLottieError::NoDrawableShapes);
     }
 
+    if options.tgs_compatible && layers.len() > 512 {
+        return Err(SvgToLottieError::TooManyLayers {
+            count: layers.len(),
+            max: 512,
+        });
+    }
+
     layers.reverse();
     for (i, layer) in layers.iter_mut().enumerate() {
         if let Some(obj) = layer.as_object_mut() {
@@ -395,13 +489,9 @@ pub fn convert_svg_to_tgs(
     options: &SvgToLottieOptions,
 ) -> Result<Vec<u8>, SvgToLottieError> {
     let value = convert_svg_to_value(svg_data, options)?;
-    let json_bytes = serde_json::to_vec(&value)
-        .map_err(|e| SvgToLottieError::SerializationError(e.to_string()))?;
-
     let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::best());
-    encoder
-        .write_all(&json_bytes)
-        .map_err(|e| SvgToLottieError::CompressionError(e.to_string()))?;
+    serde_json::to_writer(&mut encoder, &value)
+        .map_err(|e| SvgToLottieError::SerializationError(e.to_string()))?;
     encoder
         .finish()
         .map_err(|e| SvgToLottieError::CompressionError(e.to_string()))

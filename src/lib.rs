@@ -202,4 +202,83 @@ mod tests {
         assert!((min_x_pad - 16.0).abs() < 1e-2, "Expected min_x 16.0, got {}", min_x_pad);
         assert!((max_x_pad - 496.0).abs() < 1e-2, "Expected max_x 496.0 (16+480), got {}", max_x_pad);
     }
+
+    #[test]
+    fn test_group_opacity_propagation() {
+        let svg = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+            <g opacity="0.5">
+                <rect x="0" y="0" width="100" height="100" fill="#ff0000" fill-opacity="0.8" stroke="#000000" stroke-opacity="0.6"/>
+            </g>
+        </svg>"##;
+
+        let options = SvgToLottieOptions::default();
+        let value = convert_svg_to_value(svg, &options).expect("Conversion should succeed");
+        let shapes = value["layers"][0]["shapes"].as_array().unwrap();
+
+        let fl = shapes.iter().find(|s| s["ty"] == "fl").unwrap();
+        let st = shapes.iter().find(|s| s["ty"] == "st").unwrap();
+
+        // Fill opacity: 0.8 * 0.5 = 0.40 -> 40.0%
+        let fill_op = fl["o"]["k"].as_f64().unwrap();
+        assert!((fill_op - 40.0).abs() < 1e-2, "Expected fill opacity 40.0, got {}", fill_op);
+
+        // Stroke opacity: 0.6 * 0.5 = 0.30 -> 30.0%
+        let stroke_op = st["o"]["k"].as_f64().unwrap();
+        assert!((stroke_op - 30.0).abs() < 1e-2, "Expected stroke opacity 30.0, got {}", stroke_op);
+    }
+
+    #[test]
+    fn test_unclosed_path_stroke_not_forced_closed() {
+        let svg = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+            <path d="M 10 10 L 90 10 L 90 90" fill="#ff0000" stroke="#000000" stroke-width="2"/>
+        </svg>"##;
+
+        let options = SvgToLottieOptions::default();
+        let value = convert_svg_to_value(svg, &options).expect("Conversion should succeed");
+        let shapes = value["layers"][0]["shapes"].as_array().unwrap();
+
+        let sh = shapes.iter().find(|s| s["ty"] == "sh").unwrap();
+        let is_closed = sh["ks"]["k"]["c"].as_bool().unwrap();
+
+        assert!(!is_closed, "Unclosed path with both fill and stroke must remain c=false so stroke is not closed");
+    }
+
+    #[test]
+    fn test_stroke_dasharray_conversion() {
+        let svg = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+            <line x1="0" y1="50" x2="100" y2="50" stroke="#000000" stroke-width="2" stroke-dasharray="10 5" stroke-dashoffset="2"/>
+        </svg>"##;
+
+        let options = SvgToLottieOptions::default();
+        let value = convert_svg_to_value(svg, &options).expect("Conversion should succeed");
+        let shapes = value["layers"][0]["shapes"].as_array().unwrap();
+
+        let st = shapes.iter().find(|s| s["ty"] == "st").unwrap();
+        let dashes = st["d"].as_array().expect("Stroke should contain 'd' property for dasharray");
+
+        assert_eq!(dashes.len(), 3); // dash, gap, offset
+        assert_eq!(dashes[0]["n"], "d");
+        assert_eq!(dashes[1]["n"], "g");
+        assert_eq!(dashes[2]["n"], "o");
+
+        let dash_val = dashes[0]["v"]["k"].as_f64().unwrap();
+        let gap_val = dashes[1]["v"]["k"].as_f64().unwrap();
+        let offset_val = dashes[2]["v"]["k"].as_f64().unwrap();
+
+        assert!((dash_val - 10.0).abs() < 1e-2);
+        assert!((gap_val - 5.0).abs() < 1e-2);
+        assert!((offset_val - 2.0).abs() < 1e-2);
+    }
+
+    #[test]
+    fn test_multiline_formatted_text_detection() {
+        // Prettier / linter formatted SVG where attributes start on a new line
+        let svg = "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 100 100\">\n  <rect x=\"0\" y=\"0\" width=\"100\" height=\"100\" fill=\"#ff0000\"/>\n  <text\n    x=\"10\"\n    y=\"20\">\n    Hello\n  </text>\n</svg>";
+
+        let options = SvgToLottieOptions::default();
+        let result = convert_svg_to_value(svg, &options);
+        if let Err(e) = &result {
+            panic!("Conversion failed with error: {:?}", e);
+        }
+    }
 }

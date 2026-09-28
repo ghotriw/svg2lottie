@@ -95,6 +95,7 @@ pub fn create_radial_gradient_fill(
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn create_linear_gradient_stroke(
     lg: &usvg::LinearGradient,
     transform: Transform,
@@ -103,6 +104,7 @@ pub fn create_linear_gradient_stroke(
     line_join: u8,
     miter_limit: f32,
     opacity: f32,
+    dashes: Option<serde_json::Value>,
 ) -> serde_json::Value {
     let combined_tf = transform.pre_concat(lg.transform());
 
@@ -114,7 +116,7 @@ pub fn create_linear_gradient_stroke(
 
     let (points_count, gradient_k) = build_lottie_gradient_stops(lg.stops());
 
-    serde_json::json!({
+    let mut stroke_obj = serde_json::json!({
         "ty": "gs",
         "nm": "Linear Gradient Stroke",
         "t": 1,
@@ -129,9 +131,16 @@ pub fn create_linear_gradient_stroke(
             "p": points_count,
             "k": { "a": 0, "k": gradient_k }
         }
-    })
+    });
+
+    if let (Some(d), Some(map)) = (dashes, stroke_obj.as_object_mut()) {
+        map.insert("d".to_string(), d);
+    }
+
+    stroke_obj
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn create_radial_gradient_stroke(
     rg: &usvg::RadialGradient,
     transform: Transform,
@@ -140,6 +149,7 @@ pub fn create_radial_gradient_stroke(
     line_join: u8,
     miter_limit: f32,
     opacity: f32,
+    dashes: Option<serde_json::Value>,
 ) -> serde_json::Value {
     let combined_tf = transform.pre_concat(rg.transform());
 
@@ -152,7 +162,7 @@ pub fn create_radial_gradient_stroke(
 
     let (points_count, gradient_k) = build_lottie_gradient_stops(rg.stops());
 
-    serde_json::json!({
+    let mut stroke_obj = serde_json::json!({
         "ty": "gs",
         "nm": "Radial Gradient Stroke",
         "t": 2,
@@ -167,5 +177,11 @@ pub fn create_radial_gradient_stroke(
             "p": points_count,
             "k": { "a": 0, "k": gradient_k }
         }
-    })
+    });
+
+    if let (Some(d), Some(map)) = (dashes, stroke_obj.as_object_mut()) {
+        map.insert("d".to_string(), d);
+    }
+
+    stroke_obj
 }
