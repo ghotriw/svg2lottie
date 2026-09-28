@@ -3,7 +3,7 @@
 [![Crates.io](https://img.shields.io/crates/v/svg2lottie.svg)](https://crates.io/crates/svg2lottie)
 [![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg)](LICENSE-MIT)
 
-Converts SVG vector files into Lottie JSON and Telegram `.tgs` stickers and custom emojis. Pure Rust, no C/C++ dependencies.
+Converts SVG vector files into Lottie JSON and Telegram `.tgs` stickers and custom emojis.
 
 Built on [`usvg`](https://github.com/RazrFalcon/resvg) — handles static vector geometry, transforms, bezier curves, arc approximations, group opacity, dashed strokes (`stroke-dasharray`), linear and radial gradients (fills and strokes). Dynamic SVG animations (SMIL/CSS keyframes) and pattern fills are not supported. It packages static vector artwork into a valid, looping Lottie timeline composition required by Telegram and Lottie players.
 

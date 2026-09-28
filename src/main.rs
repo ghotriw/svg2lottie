@@ -9,8 +9,7 @@ use svg2lottie::{convert_svg_to_tgs, convert_svg_to_value, SvgToLottieOptions};
 #[command(
     name = "svg2lottie",
     version,
-    about = "Convert SVG files into Lottie animations and Telegram TGS stickers",
-    long_about = "A fast, pure-Rust converter that turns SVG vector files into Lottie JSON and Telegram-compatible TGS animations."
+    about = "Convert SVG vector files into Lottie JSON and Telegram TGS stickers"
 )]
 struct Args {
     /// Input SVG file path, or '-' to read from stdin
